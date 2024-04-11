@@ -27,8 +27,8 @@
 # MAGIC
 # MAGIC | Widget Variable | Description | Default Value |
 # MAGIC | --------------- | ----------- | ------------- |
-# MAGIC | `PUBMED_CATALOG` | The UC Catalog where we'll persist our PubMed Pipeline Volume Files, Tables, and Models | *pubmed_pipeline* |
-# MAGIC | `PUBMED_SCHEMA` | The `PUBMED_CATALOG` schema where we'll persist our Raw Curation PubMed Volume Files and Tables | *raw* |
+# MAGIC | `PUBMED_CATALOG` | The UC Catalog where we'll persist our PubMed Pipeline Volume Files, Tables, Vector Indexes, and Models | *pubmed_pipeline* |
+# MAGIC | `PUBMED_SCHEMA_RAW` | The `PUBMED_CATALOG` schema where we'll persist our Raw Curation PubMed Volume Files and Tables | *raw* |
 # MAGIC | `FILE_TYPE` | The file type that we want sync between Commercial Use Allowed Data and our local metadata table | *xml* |
 
 # COMMAND ----------
@@ -45,9 +45,18 @@ if set_widgets:
                          label="Schema for Raw File")
     dbutils.widgets.dropdown(name="FILE_TYPE",
                              defaultValue="xml",
-                             choices=["xml", "text", "pdf", "all"],
+                             choices=["xml", "text"],
                              label="Raw File ingest type")
+    # TODO: Add handling for eventual pdf metadata sync
 
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC **TODO** - Brad update the md to include description of code.
+# MAGIC
+# MAGIC **NOTE** - We have only provided the primary columns in the table creation, there will be additional columns added during the first ingest due to setting `"spark.databricks.delta.schema.autoMerge.enabled`.
 
 # COMMAND ----------
 
@@ -60,11 +69,11 @@ PUBMED_CATALOG = dbutils.widgets.get("PUBMED_CATALOG")
 PUBMED_SCHEMA_RAW = dbutils.widgets.get("PUBMED_SCHEMA_RAW")
 FILE_TYPE = dbutils.widgets.get("FILE_TYPE")
 
-# PubMed MetaData Constants
+# PubMed MetaData Blob Stoage Constants
 PMC_BUCKET = "s3://pmc-oa-opendata"
-PMV_ROOT_PATH = "oa_comm/"
+PMC_ROOT_PATH = "oa_comm"
 
-# Derived PubMed MetaData Sync Variables
+# Derived PubMed MetaData Sync Variables (derived as convention)
 volume_base_path = f"/Volumes/{PUBMED_CATALOG}/{PUBMED_SCHEMA_RAW}/articles"
 checkpoint_path = f"{volume_base_path}/_checkpoints/"
 metadata_table = f"{PUBMED_CATALOG}.{PUBMED_SCHEMA_RAW}.metadata_{FILE_TYPE}"
@@ -77,14 +86,17 @@ f"""CREATE TABLE IF NOT EXISTS {metadata_table} (
 USING DELTA CLUSTER BY (AccessionID)"""
 
 spark.sql(create_metadata_table_sql)
+# Since we didn't put all of the columns in the original create table statement, thus future columns will be added
 spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
 # COMMAND ----------
 
 # DBTITLE 1,Utility functions
-from delta.tables import *
+from delta.tables import DeltaTable
 import pyspark.sql.functions as fn
 
+# df in this case is the list of metadata read from PubMed s3 metadata file
+# This is the insert method that will run for every microbatch in our structured streaming job
 def upsertMetadata(df, epochId):
   delta_metadata = DeltaTable.forName(sparkSession=df.sparkSession.getActiveSession(),
                                       tableOrViewName=metadata_table).alias("target")
@@ -95,13 +107,23 @@ def upsertMetadata(df, epochId):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC
+# MAGIC **TODO**: Docuent the frequence of pubmed source data updates and choice of trigger.
+
+# COMMAND ----------
+
+f"{PMC_BUCKET}/{PMC_ROOT_PATH}/{FILE_TYPE}/metadata/csv/"
+
+# COMMAND ----------
+
 # DBTITLE 1,Upsert Metadata table from latest CSV
 list_df = spark.readStream.format("cloudFiles") \
   .option("cloudFiles.format", "csv") \
   .option("cloudFiles.allowOverwrites", "true") \
   .option("cloudFiles.schemaLocation", checkpoint_path+metadata_table) \
   .option("header", "true") \
-  .load(f"{PMC_BUCKET}/{PMV_ROOT_PATH}/{FILE_TYPE}/metadata/csv/") \
+  .load(f"{PMC_BUCKET}/{PMC_ROOT_PATH}/{FILE_TYPE}/metadata/csv/") \
   .withColumnRenamed("Article Citation", "ArticleCitation") \
   .withColumnRenamed("Last Updated UTC (YYYY-MM-DD HH:MM:SS)", "LastUpdated") \
   .withColumn("LastUpdated", fn.col("LastUpdated").cast("timestamp")) \
@@ -122,6 +144,7 @@ list_df \
 
 # COMMAND ----------
 
+# Optional
 inspect_metadata=False
 if inspect_metadata:
     select_metadata_table_sql = f"SELECT * FROM {metadata_table}"
