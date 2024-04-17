@@ -18,7 +18,7 @@
 
 # Reference code to configure widgets
 
-set_widgets=True
+set_widgets=False
 if set_widgets:
     dbutils.widgets.text(name="PUBMED_CATALOG",
                          defaultValue="pubmed_pipeline",

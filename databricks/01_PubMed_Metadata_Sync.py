@@ -47,12 +47,17 @@ if set_widgets:
                              defaultValue="xml",
                              choices=["xml", "text"],
                              label="Raw File ingest type")
+    dbutils.widgets.text(name="PUBMED_DOCS_VOLUME",
+                         defaultValue="articles")
     # TODO: Add handling for eventual pdf metadata sync
 
 
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC
+# MAGIC **TODO** - Actually record / retain the xml files and leave in raw schema.
+# MAGIC **TODO** - Write the table form of the article as a **curated** schema table (currently written as a raw table) 
 # MAGIC
 # MAGIC **TODO** - Brad update the md to include description of code.
 # MAGIC
@@ -68,13 +73,14 @@ if set_widgets:
 PUBMED_CATALOG = dbutils.widgets.get("PUBMED_CATALOG")
 PUBMED_SCHEMA_RAW = dbutils.widgets.get("PUBMED_SCHEMA_RAW")
 FILE_TYPE = dbutils.widgets.get("FILE_TYPE")
+PUBMED_DOCS_VOLUME = dbutils.widgets.get("PUBMED_DOCS_VOLUME")
 
 # PubMed MetaData Blob Stoage Constants
 PMC_BUCKET = "s3://pmc-oa-opendata"
 PMC_ROOT_PATH = "oa_comm"
 
 # Derived PubMed MetaData Sync Variables (derived as convention)
-volume_base_path = f"/Volumes/{PUBMED_CATALOG}/{PUBMED_SCHEMA_RAW}/articles"
+volume_base_path = f"/Volumes/{PUBMED_CATALOG}/{PUBMED_SCHEMA_RAW}/{PUBMED_DOCS_VOLUME}"
 checkpoint_path = f"{volume_base_path}/_checkpoints/"
 metadata_table = f"{PUBMED_CATALOG}.{PUBMED_SCHEMA_RAW}.metadata_{FILE_TYPE}"
 
