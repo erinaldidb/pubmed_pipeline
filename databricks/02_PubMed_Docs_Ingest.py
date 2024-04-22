@@ -1,4 +1,21 @@
 # Databricks notebook source
+import inspect
+
+# COMMAND ----------
+
+displayHTML("<b>HELLO</b>")
+
+# COMMAND ----------
+
+import inspect
+
+def display_html_outer(str):
+    inspect.stack()[0].frame.f_globals['displayHTML'](str)
+
+display_html_outer("<b>HELLO</b>")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC <h2> PUB MED CENTRAL - Documents loader </h2>
 # MAGIC
@@ -16,16 +33,50 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC
+# MAGIC # PubMed Articles Ingest
+# MAGIC
+# MAGIC **Objective**: In the previous notebook we got a listing of all articles. Since we will likely want to focus on a group of articles, in this notebook we will run a key word search to get a subset of articles of our interest. Then we will proceed in downloading them to raw and read into curated.
+# MAGIC
+# MAGIC This notebook can be used interactively or as a script that can be used in a job. This notebook has the following sections that are all executed in series:
+# MAGIC
+# MAGIC  * **PubMed Pipline Application Config** - Standard for all PubMed Pipeline Notebooks. This will pull our pubmed configuration from a config notebook which will be used by all notebooks in the pubmed application.
+# MAGIC  * **Set notebook variables** - Standard for all PubMed Pipeline Notebooks. These are arguments we want exposed for scheduling jobs and have notebook scope.
+# MAGIC  * **Run `get_keyword_pmids`** - This method will provide a python set of `pmids` which are a unique identifier for PubMed articles.
+# MAGIC  * **Run `get_pending_pmids`** - This method will run a query against `PUBMED_METADATA_TABLE` to find all pmids that satisfy `status ='PENDING'`.
+# MAGIC  * **Create `ingest_pmids_df` pyspark DataFrame** - Sine we have `keyword_pmids` from `get_keyword_pmids` and `pending_pmids` from `get_pending_pmids`, we can now create a dataframe of the pmid we need to ingest, `pmids_df`.
+# MAGIC  * **Run `get_needed_pmids`** - PUBMED_METADATA_TABLE Streaming Merge 
+# MAGIC
+# MAGIC  * **CREATE `PUBMED_METADATA_TABLE`** - We will run a create metadata table method
+# MAGIC  * **`PUBMED_METADATA_TABLE` Streaming Merge** - This the the core job in the notebook which runs a streaming job to update `PUBMED_METADATA_TABLE`.
+# MAGIC  * **Inspect `PUBMED_METADATA_TABLE` (OPTIONAL)** - Short validation code to inspect the changes since last update. 
+# MAGIC
+
+# COMMAND ----------
+
+# MAGIC %run ./_resources/pubmed_config $reset_all_data=false
+
+# COMMAND ----------
+
+keyword_search = "brain cancer"
+pmids = get_keyword_pmids(keyword_search, limit_results=20)
+pmids
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC **TODO** - Actually record / retain the xml files and leave in raw schema.
+# MAGIC
+# MAGIC **TODO** - Write the table form of the article as a **curated** schema table (currently written as a raw table) 
+
+# COMMAND ----------
+
 # Reference code to configure widgets
 
-set_widgets=False
+set_widgets=True
 if set_widgets:
-    dbutils.widgets.text(name="PUBMED_CATALOG",
-                         defaultValue="pubmed_pipeline",
-                         label="Catalog for all Pubmed")
-    dbutils.widgets.text(name="PUBMED_SCHEMA",
-                         defaultValue="raw",
-                         label="Schema for Raw File")
     dbutils.widgets.dropdown(name="FILE_TYPE",
                              defaultValue="xml",
                              choices=["xml", "text", "pdf", "all"],
@@ -38,6 +89,11 @@ if set_widgets:
                              defaultValue="20",
                              choices=["10","20","50","200","1000","20000","500000", "0"],
                              label="Raw File ingest type")
+    
+FILE_TYPE = dbutils.widgets.get("FILE_TYPE")
+KW_SEARCH = dbutils.widgets.get("KW_SEARCH")
+RSLT_LIMIT = int(dbutils.widgets.get("RSLT_LIMIT"))
+
 
 # COMMAND ----------
 
@@ -48,19 +104,8 @@ if set_widgets:
 pmc_bucket = "s3://pmc-oa-opendata"
 base_path = "oa_comm/"
 
-# Get Widget Arguments
-catalog = dbutils.widgets.get("PUBMED_CATALOG")
-PUBMED_CATALOG = catalog
-schema = dbutils.widgets.get("PUBMED_SCHEMA")
-PUBMED_SCHEMA = schema
-file_type = dbutils.widgets.get("FILE_TYPE")
-FILE_TYPE = file_type
-keyword_search = dbutils.widgets.get("KW_SEARCH")
-KW_SEARCH = keyword_search
-limit_results = int(dbutils.widgets.get("RSLT_LIMIT"))
-RSLT_LIMIT = limit_results
 
-volume_base_path = f"/Volumes/{catalog}/{schema}/pub_med_vol"
+volume_base_path = f"/Volumes/{PUBMED_CATALOG}/{PUBMED_DOCS_VOLUME}/pub_med_vol"
 metadata_table = f"{catalog}.{schema}.metadata_{file_type}"
 documents_table = f"{catalog}.{schema}.doc_data_{file_type}"
 documents_chunks_table = f"{catalog}.{schema}.doc_chunks_{file_type}"
@@ -84,6 +129,24 @@ CREATE TABLE IF NOT EXISTS {documents_chunks_table} (
 ) CLUSTER BY (accession_id) TBLPROPERTIES (delta.enableChangeDataFeed = true); 
 """)
 spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+
+# COMMAND ----------
+
+
+
+def downloaderUDF(accession_id: str, file_type:str = "txt"):
+  import boto3
+  from botocore import UNSIGNED
+  from botocore.client import Config
+
+  s3_conn = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+  bucket_name = "pmc-oa-opendata"
+  prefix = f"oa_comm/{file_type}/all"
+  try:
+    s3_conn.download_file(bucket_name, f'{prefix}/{accession_id}.{file_type}', f"{volume_base_path}/all/{file_type}/{accession_id}.{file_type}")
+    return "DOWNLOADED"
+  except:
+    return "ERROR"
 
 # COMMAND ----------
 
@@ -177,6 +240,10 @@ from time import sleep
 #Paper in XML format
 #https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=PMC10854087
 
+keyword_search = "TAN"
+limit_results = 20 
+
+
 def searchPMCPapers(keyword: str):
   base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&usehistory=y"
   ret_max = 10000
@@ -225,6 +292,10 @@ if limit_results:
   print(f"LIMITED RESULTS TO {limit_results} PER REQUEST")
 
 print("TOTAL RESULTS TO PROCESS:",len(list_pmid))
+
+# COMMAND ----------
+
+list_pmid
 
 # COMMAND ----------
 

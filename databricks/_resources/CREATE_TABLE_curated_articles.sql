@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS {tbl_name} (
+  a INT)
+USING DELTA

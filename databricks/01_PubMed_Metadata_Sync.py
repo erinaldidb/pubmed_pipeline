@@ -3,156 +3,141 @@
 # MAGIC
 # MAGIC # PubMed MetaData Sync
 # MAGIC
-# MAGIC This notebook can be used interactively or as a script that can be used in a job. The script has the following sections that are all executed in series:
+# MAGIC **Objective**: This notebook will syncronize the metadata of articles in PubMed provided in an S3 bucket with a delta table in Unity Catalog. This will provide a local reference for updates as well as provide a historical record of when publications were available for download.
 # MAGIC
-# MAGIC  * **Set Parameters Using Widgets (OPTIONAL)**
-# MAGIC  * **Set PubMed Constants and Derived Variables**
-# MAGIC  * **Define Utility Finctions**
-# MAGIC  * **Run Streaming Merge Into MetaData Delta Table**
-# MAGIC  * **Inspect Results (OPTIONAL)** 
+# MAGIC This notebook can be used interactively or as a script that can be used in a job. This notebook has the following sections that are all executed in series:
 # MAGIC
-# MAGIC <h2> PUB MED CENTRAL - Metadata loader </h2>
+# MAGIC  * **PubMed Pipline Application Config** - Standard for all PubMed Pipeline Notebooks. This will pull our pubmed configuration from `pubmed_pipeline_config` which is used by all notebooks in our pubmed pipeline application. This will ensure consistant configuration across all workflow tasks and organize verbose configurations elsewhere so that the notebook content is more task and less config oriented.
+# MAGIC  * **Inspect UC Assets (OPTIONAL)** - CREATE IF NOT EXISTS sql is triggered anytime the `uc_name` is resolved in any of our pubmed pipline application assets. Thus, if the code for inspect is run and those assets don't exist, they will be created.
+# MAGIC  * **`PUBMED_METADATA_TABLE` Streaming Merge** - This the the core job in the notebook which runs a streaming job to update `PUBMED_METADATA_TABLE`.
+# MAGIC  * **Inspect `PUBMED_METADATA_TABLE` (OPTIONAL)** - Short validation code to inspect the changes since last update. 
 # MAGIC
-# MAGIC 1) Autoloader with allowOverwrites to download latest metadata filelist available from pubmed central
-# MAGIC     - S3 Path: s3://pmc-oa-opendata/oa_comm/ for all the Commercial Use Allowed data
-# MAGIC 2) Identify the differences with already ingested metadatas: identify new and retracted articles
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC
-# MAGIC # Set Notebook Arguments Using Widgets (OPTIONAL)
-# MAGIC
-# MAGIC This will enable interactive use of the notebook. Since we want our script to be executable across landscapes, we will argument script specific arguments which are:
-# MAGIC
-# MAGIC | Widget Variable | Description | Default Value |
-# MAGIC | --------------- | ----------- | ------------- |
-# MAGIC | `PUBMED_CATALOG` | The UC Catalog where we'll persist our PubMed Pipeline Volume Files, Tables, Vector Indexes, and Models | *pubmed_pipeline* |
-# MAGIC | `PUBMED_SCHEMA_RAW` | The `PUBMED_CATALOG` schema where we'll persist our Raw Curation PubMed Volume Files and Tables | *raw* |
-# MAGIC | `FILE_TYPE` | The file type that we want sync between Commercial Use Allowed Data and our local metadata table | *xml* |
-
-# COMMAND ----------
-
-# Reference code to configure widgets
-
-set_widgets=False
-if set_widgets:
-    dbutils.widgets.text(name="PUBMED_CATALOG",
-                         defaultValue="pubmed_pipeline",
-                         label="Catalog for all Pubmed")
-    dbutils.widgets.text(name="PUBMED_SCHEMA_RAW",
-                         defaultValue="raw",
-                         label="Schema for Raw File")
-    dbutils.widgets.dropdown(name="FILE_TYPE",
-                             defaultValue="xml",
-                             choices=["xml", "text"],
-                             label="Raw File ingest type")
-    dbutils.widgets.text(name="PUBMED_DOCS_VOLUME",
-                         defaultValue="articles")
-    # TODO: Add handling for eventual pdf metadata sync
-
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC
-# MAGIC **TODO** - Actually record / retain the xml files and leave in raw schema.
-# MAGIC **TODO** - Write the table form of the article as a **curated** schema table (currently written as a raw table) 
-# MAGIC
-# MAGIC **TODO** - Brad update the md to include description of code.
-# MAGIC
-# MAGIC **NOTE** - We have only provided the primary columns in the table creation, there will be additional columns added during the first ingest due to setting `"spark.databricks.delta.schema.autoMerge.enabled`.
-
-# COMMAND ----------
-
-# DBTITLE 1,INIT
-#OA_COMM is for Commercial Use
-#https://www.ncbi.nlm.nih.gov/pmc/tools/pmcaws/
-
-# Widget Assigned Constants
-PUBMED_CATALOG = dbutils.widgets.get("PUBMED_CATALOG")
-PUBMED_SCHEMA_RAW = dbutils.widgets.get("PUBMED_SCHEMA_RAW")
+# DBTITLE 1,Widgets Configuration
+dbutils.widgets.dropdown(name="FILE_TYPE", defaultValue="xml", choices=["xml", "text"])
 FILE_TYPE = dbutils.widgets.get("FILE_TYPE")
-PUBMED_DOCS_VOLUME = dbutils.widgets.get("PUBMED_DOCS_VOLUME")
-
-# PubMed MetaData Blob Stoage Constants
-PMC_BUCKET = "s3://pmc-oa-opendata"
-PMC_ROOT_PATH = "oa_comm"
-
-# Derived PubMed MetaData Sync Variables (derived as convention)
-volume_base_path = f"/Volumes/{PUBMED_CATALOG}/{PUBMED_SCHEMA_RAW}/{PUBMED_DOCS_VOLUME}"
-checkpoint_path = f"{volume_base_path}/_checkpoints/"
-metadata_table = f"{PUBMED_CATALOG}.{PUBMED_SCHEMA_RAW}.metadata_{FILE_TYPE}"
-
-create_metadata_table_sql = \
-f"""CREATE TABLE IF NOT EXISTS {metadata_table} (
-    AccessionID STRING,
-    LastUpdated TIMESTAMP,
-    Status String, KEY String)
-USING DELTA CLUSTER BY (AccessionID)"""
-
-spark.sql(create_metadata_table_sql)
-# Since we didn't put all of the columns in the original create table statement, thus future columns will be added
-spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
 # COMMAND ----------
 
-# DBTITLE 1,Utility functions
-from delta.tables import DeltaTable
-import pyspark.sql.functions as fn
-
-# df in this case is the list of metadata read from PubMed s3 metadata file
-# This is the insert method that will run for every microbatch in our structured streaming job
-def upsertMetadata(df, epochId):
-  delta_metadata = DeltaTable.forName(sparkSession=df.sparkSession.getActiveSession(),
-                                      tableOrViewName=metadata_table).alias("target")
-  delta_metadata.merge(df.alias("source"), "source.AccessionID = target.AccessionID") \
-    .whenMatchedUpdateAll(condition="source.LastUpdated > target.LastUpdated") \
-    .whenNotMatchedInsertAll() \
-    .execute()
+# MAGIC %run ./_resources/pubmed_pipeline_config $reset_all_data=false
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC
-# MAGIC **TODO**: Docuent the frequence of pubmed source data updates and choice of trigger.
+# MAGIC ## Inspect UC Assets (OPTIONAL)
+# MAGIC
+# MAGIC There are two separate assets that we interact with for the first time in this notebooks. Since when we look at the `name` of each we will instantiate it, we will actually be able to see the asset in uc. This code segment, will create hyperlinks to inspect those assets so that we can inspect them via the unity catalog UI.
+# MAGIC
+# MAGIC **TODO**: The urls are deterministic and should be added in the `PubMedAsset` class opposed to being derived here
 
 # COMMAND ----------
 
-f"{PMC_BUCKET}/{PMC_ROOT_PATH}/{FILE_TYPE}/metadata/csv/"
+inspect_assets = True
+if inspect_assets:
+    host_url = "https://adb-8590162618558854.14.azuredatabricks.net"
+    raw_metadata_url = host_url + '/explore/data/' + "/".join(pubmed.raw_metadata.name.split('.'))
+    raw_metadata_ddl_url = f"{host_url}/#workspace/Repos/brad.barker@databricks.com/pubmed_pipeline/databricks/_resources/CREATE_TABLE_raw_metadata.sql"
+    raw_metadata_cp_url = host_url + '/explore/data/volumes/' + "/".join(pubmed.raw_metadata.cp.name.split('.'))
+    raw_metadata_ddl_cp_url = f"{host_url}/#workspace/Repos/brad.barker@databricks.com/pubmed_pipeline/databricks/_resources/CREATE_VOLUME_raw_checkpoints.sql"
+    inspect_html = f"""<table border="1" cellpadding="10">
+    <tr><th style="background-color: orange;">UC Namespace</th>
+        <th style="background-color: orange;">SQL DDL</th></tr>
+    <tr><td><a href={raw_uc_url} target="_blank">{pubmed.raw_metadata.name}</a></td>
+        <td><a href={raw_metadata_ddl_url} target="_blank">CREATE_TABLE_raw_metadata.sql</a></td></tr>
+    <tr><td><a href={raw_metadata_cp_url} target="_blank">{pubmed.raw_metadata.cp.name}</a></td>
+        <td><a href={raw_metadata_ddl_cp_url} target="_blank">CREATE_VOLUME_raw_checkpoints.sql</a></td></tr></table>"""
+    displayHTML(inspect_html)
 
 # COMMAND ----------
 
-# DBTITLE 1,Upsert Metadata table from latest CSV
-list_df = spark.readStream.format("cloudFiles") \
-  .option("cloudFiles.format", "csv") \
-  .option("cloudFiles.allowOverwrites", "true") \
-  .option("cloudFiles.schemaLocation", checkpoint_path+metadata_table) \
-  .option("header", "true") \
-  .load(f"{PMC_BUCKET}/{PMC_ROOT_PATH}/{FILE_TYPE}/metadata/csv/") \
-  .withColumnRenamed("Article Citation", "ArticleCitation") \
-  .withColumnRenamed("Last Updated UTC (YYYY-MM-DD HH:MM:SS)", "LastUpdated") \
-  .withColumn("LastUpdated", fn.col("LastUpdated").cast("timestamp")) \
-  .withColumn("_file_path", fn.col("_metadata.file_path")) \
-  .withColumn("_file_modification_time", fn.col("_metadata.file_modification_time")) \
-  .withColumn("_file_size", fn.col("_metadata.file_size")) \
-  .withColumn("_ingestion_timestamp", fn.current_timestamp()) \
-  .withColumn("Status", fn.lit("PENDING"))
-
-list_df \
-  .writeStream \
-  .foreachBatch(upsertMetadata) \
-  .trigger(availableNow=True) \
-  .option("checkpointLocation", checkpoint_path+metadata_table) \
-  .queryName(f"query_{metadata_table}") \
-  .start() \
-  .awaitTermination()
+# MAGIC %md
+# MAGIC
+# MAGIC # `PUBMED_METADATA_TABLE` Streaming Upsert 
+# MAGIC
+# MAGIC For the ingest of PubMed metadata data into `PUBMED_METADATA_TABLE` we'll be using [Upsert from streaming queries using foreachBatch](https://docs.databricks.com/en/structured-streaming/delta-lake.html#upsert-from-streaming-queries-using-foreachbatch). However, there are quite a few configurations that go into this streaming process that we'll document below:
+# MAGIC
+# MAGIC  * **CloudFormat and Options** - We are going to [query a cloud storage object using autoloader](https://docs.databricks.com/en/query/streaming.html#query-data-in-cloud-object-storage-with-auto-loader). Thus, we will set the format to do this as `.format("cloudFiles")`. However, cloudFiles takes additional arguements, called *options*, to ensure that the csv source is read correctly. We'll set those configurations in the dict `readStream_options` and apply those configuration to the readStream using [`.options`](https://spark.apache.org/docs/3.1.1/api/python/reference/api/pyspark.sql.DataFrameReader.options.html).
+# MAGIC  * **Load Source** - We'll use our notebook scope vaariable `PUBMED_SOURCE_METADATA_BUCKET` to [`.load`](https://spark.apache.org/docs/3.1.1/api/python/reference/api/pyspark.sql.streaming.DataStreamReader.load.html) from our S3 bucket source.
+# MAGIC  * **Select Columns** - While a common pattern is to ingest a data file raw and persist then run a second query that curates the source file, we are not going to do that for this metadata file. To avoid that unnecessary intermediate step, we are going to transform into our target table format using [`.select`](https://spark.apache.org/docs/3.1.1/api/python/reference/api/pyspark.sql.DataFrame.select.html). This is the same select method that is availailable with regular pyspark dataframes. For readability, we are going to write our select columns as a list of pyspark columns in `readStream_columns` and pass as positional arguments into the `.select` method.
+# MAGIC  * **WriteStream for each microbatch** - You are able to write a structured streaming dataframe by converting the streaming Dataframe to [`.writeStream`](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.writeStream.html#pyspark-sql-dataframe-writestream) and the use [`.foreachBatch`](https://spark.apache.org/docs/3.1.3/api/python/reference/api/pyspark.sql.streaming.DataStreamWriter.foreachBatch.html) to write each microbatch. `.foreachBatch` takes a function arguement, `upsert_metadata`. What's nice about this api design is that the function accepts microbatches as dataframes. Thus, the syntax that we use for streaming into delta tables is the same syntax that we use for batch merge jobs.
+# MAGIC
+# MAGIC **NOTE**: Gathering large arguments like this is not just helpful for readability, it also helps mitigate syntax errors by the developer. Since this streaming job was getting a little verbose, we applied the technique below.
+# MAGIC
+# MAGIC **NOTE**: The [trigger](https://docs.databricks.com/en/structured-streaming/triggers.html#configuring-incremental-batch-processing) setting of available sets the behavior to running as an incremental batch which makes sense because we are running this as a job once a day. 
 
 # COMMAND ----------
 
-# Optional
-inspect_metadata=False
+# DBTITLE 0,Stream Configurations
+from pyspark.sql import SparkSession, DataFrame, functions as F
+from delta.tables import DeltaTable
+
+# readStream Options:
+readStream_options = {"cloudFiles.format": "csv",
+                      "cloudFiles.allowOverwrites": "true",
+                      "cloudFiles.schemaLocation": pubmed.raw_metadata.cp.path,
+                      "header": "true"}
+
+# pyspark dataframe columns to select from PubMed Metadata CloudFile
+readStream_columns = [F.col("Key"),
+                      F.col("ETag"),
+                      F.col("Article Citation").alias("ArticleCitation"),
+                      F.col("AccessionID"),
+                      F.col("Last Updated UTC (YYYY-MM-DD HH:MM:SS)").cast("timestamp").alias("LastUpdated"),
+                      F.col("PMID"),
+                      F.col("License"),
+                      F.col("Retracted"),
+                      F.col("_metadata.file_path").alias("_file_path"),
+                      F.col("_metadata.file_modification_time").alias("_file_modification_time"),
+                      F.col("_metadata.file_size").alias("_file_size"),
+                      F.current_timestamp().alias("_ingestion_timestamp"),
+                      F.lit("PENDING").alias("status")]
+
+def upsert_metadata(microBatchOutputDF: DataFrame, batchId: int):
+    tgt_df = DeltaTable.forName(sparkSession = microBatchOutputDF.sparkSession.getActiveSession(),
+                                tableOrViewName = pubmed.raw_metadata.name).alias("tgt")
+    tgt_df.merge(source = microBatchOutputDF.alias("src"),
+                 condition = "src.AccessionID = tgt.AccessionID") \
+        .whenMatchedUpdateAll(condition="src.LastUpdated > tgt.LastUpdated") \
+        .whenNotMatchedInsertAll() \
+        .execute()
+
+# COMMAND ----------
+
+# TODO: Move PUBMED_SOURCE_METADATA_BUCKET into pubmed_central_utils
+PUBMED_SOURCE_METADATA_BUCKET = f"s3://pmc-oa-opendata/oa_comm/{FILE_TYPE}/metadata/csv/"
+
+spark.readStream.format("cloudFiles") \
+                .options(**readStream_options) \
+                .load(PUBMED_SOURCE_METADATA_BUCKET) \
+                .select(*readStream_columns) \
+    .writeStream.foreachBatch(upsert_metadata) \
+                .trigger(availableNow=True) \
+                .option("checkpointLocation", pubmed.raw_metadata.cp.path) \
+                .queryName(f"query_{pubmed.raw_metadata.name}") \
+                .start() \
+                .awaitTermination()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC # Inspect `PUBMED_METADATA_TABLE` (OPTIONAL)
+# MAGIC
+# MAGIC Let's check out the history of the most recent versions.
+
+# COMMAND ----------
+
+inspect_metadata_hist=True
+if inspect_metadata_hist:
+    hist = spark.sql(f"DESCRIBE HISTORY {pubmed.raw_metadata.name}")
+    display(hist)
+
+# COMMAND ----------
+
+inspect_metadata=True
 if inspect_metadata:
-    select_metadata_table_sql = f"SELECT * FROM {metadata_table}"
-    metadata_df = spark.sql(select_metadata_table_sql)
-    display(metadata_df.limit(10))
+    dat = spark.sql(f"SELECT * FROM  {pubmed.raw_metadata.name}")
+    display(dat)

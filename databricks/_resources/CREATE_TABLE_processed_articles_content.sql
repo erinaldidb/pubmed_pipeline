@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS {uc_name} (
+  a INT)
+USING DELTA
