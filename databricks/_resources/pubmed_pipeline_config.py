@@ -1,12 +1,15 @@
 # Databricks notebook source
 # reset_all_data is helpful during development since it provides an easy way to recreate all entities to test all application methods
 # TODO: Implement clean-up of all assets. This isn't essential for production deployment, but is a convenience feature that can help train others.
-dbutils.widgets.dropdown(name="reset_all_data",
-                         defaultValue="false",
-                         choices=["false", "true"])
 dbutils.widgets.dropdown(name="FILE_TYPE",
                          defaultValue="xml",
                          choices=["xml", "txt"])
+dbutils.widgets.dropdown(name="DISPLAY_CONFIGS",
+                         defaultValue="false",
+                         choices=["false", "true"])
+dbutils.widgets.dropdown(name="RESET_ALL_DATA",
+                         defaultValue="false",
+                         choices=["false", "true"])
 
 # COMMAND ----------
 
@@ -27,6 +30,7 @@ from dataclasses import dataclass, field
 from pyspark.sql import SparkSession
 from functools import cached_property
 import re
+import os
 
 @dataclass
 class PubMedAsset:
@@ -57,6 +61,9 @@ class PubMedAsset:
         sql = self.create_sql
         kwargs = {k:getattr(self, k) for k in set(self.__dir__()).intersection(set(re.findall(r"\{(.*?)\}", sql)))}
         self._spark.sql(sql.format(**kwargs))
+        if hasattr(self,"_path_value"):
+            # Means this is a volume and we need to instantiate the folders
+            os.makedirs("/".join((['', 'Volumes',] + self.uc_name.split('.') + [self._path_value,])), exist_ok=True)
         return self.uc_name
 
 # COMMAND ----------
@@ -83,7 +90,7 @@ class PubMedVolume(PubMedAsset):
     @cached_property
     def volume_root(self):
         vol_path_list = ['', 'Volumes',]
-        vol_path_list += self.uc_name.split('.')
+        vol_path_list += self.name.split('.')
         return '/'.join(vol_path_list)
     
     @cached_property
@@ -117,9 +124,12 @@ class PubMedConfig:
     def __post_init__(self):
         if (self.file_type == "") and ("FILE_TYPE" in dbutils.notebook.entry_point.getCurrentBindings()):
             self.file_type = dbutils.notebook.entry_point.getCurrentBindings()['FILE_TYPE']
-        tbls = {'processed_articles_content': {
-                    '_tbl_name': f'{self.catalog_name}.{self.schema_processed_name}.articles_content',
-                    'create_sql_file': 'CREATE_TABLE_processed_articles_content.sql'}}
+        setattr(self, 'raw_search_hist',
+                    PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_raw_name}.search_hist',
+                                create_sql_file = 'CREATE_TABLE_raw_search_hist.sql'))
+        setattr(self, 'processed_articles_content',
+                    PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_processed_name}.articles_content',
+                                create_sql_file = 'CREATE_TABLE_processed_articles_content.sql'))
         # Only include tables & volumes that are dependent upon FILE_TYPE if exists in bindings
         if self.file_type != "":
             setattr(self, 'raw_metadata',
@@ -132,7 +142,7 @@ class PubMedConfig:
             setattr(self, 'raw_articles',
                     PubMedVolume(uc_name = f'{self.catalog_name}.{self.schema_raw_name}.articles',
                                  create_sql_file = 'CREATE_VOLUME_raw_articles.sql',
-                                 _path_value=f'articles_{self.file_type}'))
+                                 _path_value=f'all/{self.file_type}'))
             setattr(self, 'curated_articles',
                     PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_curated_name}.articles_{self.file_type}',
                                 create_sql_file = 'CREATE_TABLE_curated_articles.sql'))
