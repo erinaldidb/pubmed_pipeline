@@ -51,6 +51,10 @@ class PubMedAsset:
             return "/".join(path[:-1] + ["_resources", self.create_sql_file])
 
     @cached_property
+    def create_sql_relative_url(self) -> str:
+        return self.create_sql_path.replace("/Workspace/","#workspace/")
+
+    @cached_property
     def create_sql(self) -> str:
         with open(self.create_sql_path, 'r') as f:
             return f.read()
@@ -79,6 +83,14 @@ class PubMedTable(PubMedAsset):
     @property
     def dt(self) -> delta.tables.DeltaTable:
         return delta.tables.DeltaTable.forName(self._spark, self.name)
+    
+    @cached_property
+    def uc_relative_path(self) -> str:
+        path = dbutils.entry_point.getDbutils().notebook().getContext().notebookPath().getOrElse(None).split("/")
+        if path[-2] == '_resources':
+            return '../../explore/data/' + '/'.join(self.name.split('.'))
+        elif path[-2] == 'databricks':
+            return '../explore/data/' + '/'.join(self.name.split('.'))
 
 # COMMAND ----------
 
@@ -100,6 +112,15 @@ class PubMedVolume(PubMedAsset):
             return self.volume_root
         else:
             return self.volume_root + '/' + self._path_value
+        
+    @cached_property
+    def uc_relative_path(self) -> str:
+        # TODO: Add volume path
+        path = dbutils.entry_point.getDbutils().notebook().getContext().notebookPath().getOrElse(None).split("/")
+        if path[-2] == '_resources':
+            return '../../explore/data/volumes/' + '/'.join(self.name.split('.'))
+        elif path[-2] == 'databricks':
+            return '../explore/data/volumes/' + '/'.join(self.name.split('.'))
 
 # COMMAND ----------
 
@@ -172,30 +193,25 @@ pubmed = PubMedConfig(catalog_name = PUBMED_CATALOG,
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC
-# MAGIC ### Naming Convention of `pubmed_pipeline_config`
-# MAGIC
-# MAGIC | pubmed_pipeline_config name     | description |
-# MAGIC | ------------------------------- | ----------- |
-# MAGIC | `raw_metadata`                  | A UC delta table that will maintain sync of PubMed Central index of articles.                                                 |
-# MAGIC | `raw_metadata.cp`               | A UC volume path to `raw_metadata` checkpoints                                                                                |
-# MAGIC | `raw_articles.data`             | A UC volume that will include the target location of a raw files downloaded from PubMed Central                               |
-# MAGIC | `raw_articles.view`             | TODO: A UC view of data in `raw_articles` volume which is helpful for data inspection, quality assurance, and quick debugging |
-# MAGIC | `curated_articles`              | A UC delta table that will maintain a "curated" delta table version of `raw_article` data                                     |
-# MAGIC | `curated_articles.cp`           | A UC volume path to `curated_articles` checkpoints                                                                            |
-# MAGIC | `processed_articles_content`    | A UC delta table that will maintain a "curated" delta table version of `raw_article` data                                     |
-# MAGIC | `processed_articles_content.cp` | A UC volume path to `curated_articles` checkpoints                                                                            |
-
-# COMMAND ----------
-
-display_configs = True
-if display_configs:
-    print("pubmed.raw_metadata.uc_name: " + pubmed.raw_metadata.uc_name)
-    print("pubmed.raw_metadata.cp.path: " + pubmed.raw_metadata.cp.path)
-    print("pubmed.raw_articles.path: " + pubmed.raw_articles.path)
-    print("pubmed.curated_articles.uc_name: " + pubmed.curated_articles.uc_name)
-    print("pubmed.curated.cp.path: " + pubmed.curated_articles.cp.path)
-    # NOTICE that processed_articles_content.uc_name has no file_type indicator in name, this is where we consolidate disparate file types to single table
-    print("pubmed.processed_articles_content.uc_name: " + pubmed.processed_articles_content.uc_name)
-    print("pubmed.processed_articles_content.cp.path: " + pubmed.processed_articles_content.cp.path) 
+inspect_assets = dbutils.widgets.getArgument("DISPLAY_CONFIGS")
+if inspect_assets == 'true':
+    inspect_html = f"""<table border="1" cellpadding="10">
+    <tr><th style="background-color: orange;">pubmed Asset</th>
+        <th style="background-color: orange;">Attributes</th>
+        <th style="background-color: orange;">Description</th></tr>
+    <tr><td ROWSPAN=3><b>raw_metadata</b></td>
+        <td>ddl: <a href={pubmed.raw_metadata.create_sql_relative_url}>{pubmed.raw_metadata.create_sql_file}</a></td>
+        <td ROWSPAN=3><b>raw_metadata</b> is the table that syncs with all PubMed articles list.</br>It will also maintain the download status of all articles.</td></tr>
+    <tr><td>table: <a href={pubmed.raw_metadata.uc_relative_path}>{pubmed.raw_metadata.name}</a></td></tr>
+    <tr><td>cp: <a href={pubmed.raw_metadata.cp.uc_relative_path}>{pubmed.raw_metadata.cp.name}</a></td></tr>
+    <tr><td ROWSPAN=2><b>raw_search_hist</b></td>
+        <td>ddl: <a href={pubmed.raw_search_hist.create_sql_relative_url}>{pubmed.raw_search_hist.create_sql_file}</a></td>
+        <td ROWSPAN=2><b>raw_search_hist</b> Is where we will store previous searches used to avoid having larger search windows.</td></tr>
+    <tr><td>table: <a href={pubmed.raw_search_hist.uc_relative_path}>{pubmed.raw_search_hist.name}</a></td></tr>
+    <tr><td ROWSPAN=2><b>raw_articles</b></td>
+        <td>ddl: <a href={pubmed.raw_articles.create_sql_relative_url}>{pubmed.raw_articles.create_sql_file}</a></td>
+        <td ROWSPAN=2><b>raw_articles</b> is the table that syncs with all PubMed articles list.</br>It will also maintain the download status of all articles.</td></tr>
+    <tr><td>data: <a href={pubmed.raw_articles.uc_relative_path}>{pubmed.raw_articles.name}</a></td></tr>    
+    </table>
+    TODO: Brad add remaining assets"""
+    displayHTML(inspect_html)

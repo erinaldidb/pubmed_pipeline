@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS {uc_name} (
   _file_modification_time TIMESTAMP,
   _file_size BIGINT,
   _ingestion_timestamp TIMESTAMP,
-  Status STRING)
+  Status STRING,
+  volume_path STRING)
+-- TODO: Brad include volume_path as columne when updating metadata download status
 USING DELTA
 CLUSTER BY (AccessionID)
 TBLPROPERTIES (

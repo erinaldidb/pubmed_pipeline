@@ -8,7 +8,7 @@
 # MAGIC This notebook can be used interactively or as a script that can be used in a job. This notebook has the following sections that are all executed in series:
 # MAGIC
 # MAGIC  * **PubMed Pipline Application Config** - Standard for all PubMed Pipeline Notebooks. This will pull our pubmed configuration from `pubmed_pipeline_config` which is used by all notebooks in our pubmed pipeline application. This will ensure consistant configuration across all workflow tasks and organize verbose configurations elsewhere so that the notebook content is more task and less config oriented.
-# MAGIC  * **Inspect UC Assets (OPTIONAL)** - CREATE IF NOT EXISTS sql is triggered anytime the `uc_name` is resolved in any of our pubmed pipline application assets. Thus, if the code for inspect is run and those assets don't exist, they will be created.
+# MAGIC  * **Inspect UC Assets (OPTIONAL)** - CREATE IF NOT EXISTS sql is triggered anytime the `uc_name` is resolved in any of our pubmed pipline application assets. Thus, if the code for inspect is run and those assets don't exist, they will be created. To trigger the section, set `DISPLAY_CONFIGS` to `true`.
 # MAGIC  * **`PUBMED_METADATA_TABLE` Streaming Merge** - This the the core job in the notebook which runs a streaming job to update `PUBMED_METADATA_TABLE`.
 # MAGIC  * **Inspect `PUBMED_METADATA_TABLE` (OPTIONAL)** - Short validation code to inspect the changes since last update. 
 # MAGIC
@@ -21,35 +21,7 @@ FILE_TYPE = dbutils.widgets.get("FILE_TYPE")
 
 # COMMAND ----------
 
-# MAGIC %run ./_resources/pubmed_pipeline_config $reset_all_data=false
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC
-# MAGIC ## Inspect UC Assets (OPTIONAL)
-# MAGIC
-# MAGIC There are two separate assets that we interact with for the first time in this notebooks. Since when we look at the `name` of each we will instantiate it, we will actually be able to see the asset in uc. This code segment, will create hyperlinks to inspect those assets so that we can inspect them via the unity catalog UI.
-# MAGIC
-# MAGIC **TODO**: The urls are deterministic and should be added in the `PubMedAsset` class opposed to being derived here
-
-# COMMAND ----------
-
-inspect_assets = True
-if inspect_assets:
-    host_url = "https://adb-8590162618558854.14.azuredatabricks.net"
-    raw_metadata_url = host_url + '/explore/data/' + "/".join(pubmed.raw_metadata.name.split('.'))
-    raw_metadata_ddl_url = f"{host_url}/#workspace/Repos/brad.barker@databricks.com/pubmed_pipeline/databricks/_resources/CREATE_TABLE_raw_metadata.sql"
-    raw_metadata_cp_url = host_url + '/explore/data/volumes/' + "/".join(pubmed.raw_metadata.cp.name.split('.'))
-    raw_metadata_ddl_cp_url = f"{host_url}/#workspace/Repos/brad.barker@databricks.com/pubmed_pipeline/databricks/_resources/CREATE_VOLUME_raw_checkpoints.sql"
-    inspect_html = f"""<table border="1" cellpadding="10">
-    <tr><th style="background-color: orange;">UC Namespace</th>
-        <th style="background-color: orange;">SQL DDL</th></tr>
-    <tr><td><a href={raw_uc_url} target="_blank">{pubmed.raw_metadata.name}</a></td>
-        <td><a href={raw_metadata_ddl_url} target="_blank">CREATE_TABLE_raw_metadata.sql</a></td></tr>
-    <tr><td><a href={raw_metadata_cp_url} target="_blank">{pubmed.raw_metadata.cp.name}</a></td>
-        <td><a href={raw_metadata_ddl_cp_url} target="_blank">CREATE_VOLUME_raw_checkpoints.sql</a></td></tr></table>"""
-    displayHTML(inspect_html)
+# MAGIC %run ./_resources/pubmed_pipeline_config $RESET_ALL_DATA=false $DISPLAY_CONFIGS=true
 
 # COMMAND ----------
 
@@ -96,8 +68,7 @@ readStream_columns = [F.col("Key"),
                       F.lit("PENDING").alias("status")]
 
 def upsert_metadata(microBatchOutputDF: DataFrame, batchId: int):
-    tgt_df = DeltaTable.forName(sparkSession = microBatchOutputDF.sparkSession.getActiveSession(),
-                                tableOrViewName = pubmed.raw_metadata.name).alias("tgt")
+    tgt_df = pubmed.raw_metadata.dt.alias("tgt")
     tgt_df.merge(source = microBatchOutputDF.alias("src"),
                  condition = "src.AccessionID = tgt.AccessionID") \
         .whenMatchedUpdateAll(condition="src.LastUpdated > tgt.LastUpdated") \
@@ -139,5 +110,4 @@ if inspect_metadata_hist:
 
 inspect_metadata=True
 if inspect_metadata:
-    dat = spark.sql(f"SELECT * FROM  {pubmed.raw_metadata.name}")
-    display(dat)
+    display(pubmed.raw_metadata.df)
