@@ -60,7 +60,7 @@ def get_search_hist_args(keywords: Union[str, List[str]],
                          search_hist: PubMedAsset,
                          min_dte: str = "2022/01/01",
                          max_dte: Optional[str] = None) -> List[dict]:
-    keywords: List(str) = keywords if isinstance(keywords, list) else [str(keywords),]
+    keywords: [str] = keywords if isinstance(keywords, list) else [str(keywords),]
     max_dte = max_dte or datetime.today().strftime('%Y/%m/%d')
     search_args_df = search_hist._spark.createDataFrame(data = [(kw.lower(), min_dte, max_dte) for kw in keywords],
                                                                      schema = "keyword STRING, min_dte STRING, max_dte STRING")
@@ -108,17 +108,18 @@ def download_articles(accession_id: str,
 
 from pyspark.sql import functions as F
 
-def get_needed_pmids_df(keywords: Union[str, List[str]],
-                        search_hist: PubMedAsset,
+def get_needed_pmids_df(search_hist: PubMedAsset,
                         metadata: PubMedAsset,
                         articles: PubMedAsset,
+                        keywords: Union[str, List[str]] = None,
                         min_dte: str = "2022/01/01",
                         max_dte: Optional[str] = None):
     
-    keywords: List(str) = keywords if isinstance(keywords, list) else [str(keywords),]
+    if keywords:
+        keywords: [str] = keywords if isinstance(keywords, list) else [str(keywords),]
+    else:
+        keywords: [str] = [r.keyword for r in search_hist.df.select(F.col('keyword')).distinct().collect()]
     max_dte = max_dte or datetime.today().strftime('%Y/%m/%d')
-    if not keywords[0]:
-        keywords = [r.keyword for r in search_hist.df.select(F.col('keyword')).distinct().collect()]
     
     kwargs_list = get_search_hist_args(keywords, search_hist, min_dte, max_dte)
 
@@ -131,23 +132,36 @@ def get_needed_pmids_df(keywords: Union[str, List[str]],
     pmids_df = metadata.df.sparkSession.createDataFrame([(i,) for i in pmids], "AccessionId STRING")
     file_type = metadata.name.split('_')[-1]
     articles_path = articles.path
-    print(articles_path)
-    print(file_type)
+
+    # NOTE: download_articles udf actually downloads the articles in addition to returning DOWNLOAD or ERROR status
     metadata_src = metadata.df.filter(F.col('Status') == F.lit('PENDING')) \
                            .join(pmids_df, "AccessionId", "leftsemi") \
                            .withColumn("Status",
                                        F.when(F.col('Retracted') == F.lit('yes'), F.lit("RETRACTED")) \
                                        .otherwise(download_articles(F.col("AccessionId"),
                                                                     F.lit(articles_path),
-                                                                    F.lit(file_type))))
+                                                                    F.lit(file_type)))).cache()
 
     # Update metadata table
     pubmed.raw_metadata.dt.alias("tgt").merge(source = metadata_src.alias("src"),
                                               condition = "src.AccessionID = tgt.AccessionID") \
         .whenMatchedUpdateAll() \
         .execute()
+    # metadata_src will likwly be instpected after return, if unpersist is run, would rerun entire download which is not desired
+    # metadata_src.unpersist()
 
-    # TODO: Update Search Table
+    # Update search_hist
+    pubmed.raw_search_hist.dt.alias("tgt").merge(source = spark.createDataFrame(kwargs_list).alias("src"),
+                                                 condition = "src.keyword = tgt.keyword") \
+        .whenMatchedUpdateAll() \
+        .whenNotMatchedInsertAll() \
+        .execute()
+
     # NOTE: Removal of RETRACTED Files will be moved into 01 process metadata (originally was part of download process in notebook 02)
 
+    # TODO: Return a query that is only the insert records of the last run so that we don't run the risk of triggering another download
     return metadata_src
+
+# COMMAND ----------
+
+

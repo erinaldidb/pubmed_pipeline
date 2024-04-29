@@ -18,6 +18,8 @@
 # DBTITLE 1,Widgets Configuration
 dbutils.widgets.dropdown(name="FILE_TYPE", defaultValue="xml", choices=["xml", "text"])
 FILE_TYPE = dbutils.widgets.get("FILE_TYPE")
+dbutils.widgets.dropdown(name="INSPECT_METADATA_HIST", defaultValue="true", choices=["true", "false"])
+#INSPECT_METADATA_HIST = dbutils.widgets.get("INSPECT_METADATA_HIST")
 
 # COMMAND ----------
 
@@ -101,13 +103,11 @@ spark.readStream.format("cloudFiles") \
 
 # COMMAND ----------
 
-inspect_metadata_hist=True
-if inspect_metadata_hist:
+if dbutils.widgets.get("INSPECT_METADATA_HIST") == 'true':
     hist = spark.sql(f"DESCRIBE HISTORY {pubmed.raw_metadata.name}")
     display(hist)
 
 # COMMAND ----------
 
-inspect_metadata=True
-if inspect_metadata:
+if dbutils.widgets.get("INSPECT_METADATA_HIST") == 'true':
     display(pubmed.raw_metadata.df)
