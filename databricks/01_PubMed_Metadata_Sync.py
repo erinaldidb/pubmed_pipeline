@@ -67,7 +67,8 @@ readStream_columns = [F.col("Key"),
                       F.col("_metadata.file_modification_time").alias("_file_modification_time"),
                       F.col("_metadata.file_size").alias("_file_size"),
                       F.current_timestamp().alias("_ingestion_timestamp"),
-                      F.lit("PENDING").alias("status")]
+                      F.lit("PENDING").alias("status"),
+                      F.lit(None).alias('volume_path')]
 
 def upsert_metadata(microBatchOutputDF: DataFrame, batchId: int):
     tgt_df = pubmed.raw_metadata.dt.alias("tgt")
@@ -89,7 +90,7 @@ spark.readStream.format("cloudFiles") \
     .writeStream.foreachBatch(upsert_metadata) \
                 .trigger(availableNow=True) \
                 .option("checkpointLocation", pubmed.raw_metadata.cp.path) \
-                .queryName(f"query_{pubmed.raw_metadata.name}") \
+                .queryName(f"query_{pubmed.raw_metadata.name}".replace('`','').replace('-','_')) \
                 .start() \
                 .awaitTermination()
 

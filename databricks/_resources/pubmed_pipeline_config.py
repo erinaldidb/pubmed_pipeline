@@ -13,9 +13,13 @@ dbutils.widgets.dropdown(name="RESET_ALL_DATA",
 
 # COMMAND ----------
 
+# NOTE: current version of code will fail when there are hypens, `-` in the three level naming space
 # Primary Configurations:
 # These are Application Level Configurations that may change between environments, but should remain consistant between notebooks:
-PUBMED_CATALOG = 'pubmed_pipeline'
+PUBMED_CATALOG = 'pubmed-pipeline'
+if '-' in PUBMED_CATALOG:
+    print("While not prohibited, databricks discourages the use of hyphens in UC name space. SEE https://docs.databricks.com/en/sql/language-manual/sql-ref-names.html. ")
+# To try to replicate issues with using hyphens
 PUBMED_SCHEMA_RAW = 'raw'
 PUBMED_SCHEMA_CURATED = 'curated'
 PUBMED_SCHEMA_PROCESSED = 'processed'
@@ -67,7 +71,7 @@ class PubMedAsset:
         self._spark.sql(sql.format(**kwargs))
         if hasattr(self,"_path_value"):
             # Means this is a volume and we need to instantiate the folders
-            os.makedirs("/".join((['', 'Volumes',] + self.uc_name.split('.') + [self._path_value,])), exist_ok=True)
+            os.makedirs("/".join((['', 'Volumes',] + self.uc_name.split('.') + [self._path_value,])).replace('`',''), exist_ok=True)
         return self.uc_name
 
 # COMMAND ----------
@@ -88,9 +92,9 @@ class PubMedTable(PubMedAsset):
     def uc_relative_path(self) -> str:
         path = dbutils.entry_point.getDbutils().notebook().getContext().notebookPath().getOrElse(None).split("/")
         if path[-2] == '_resources':
-            return '../../explore/data/' + '/'.join(self.name.split('.'))
+            return ('../../explore/data/' + '/'.join(self.name.split('.'))).replace('`','')
         elif path[-2] == 'databricks':
-            return '../explore/data/' + '/'.join(self.name.split('.'))
+            return ('../explore/data/' + '/'.join(self.name.split('.'))).replace('`','')
 
 # COMMAND ----------
 
@@ -103,7 +107,7 @@ class PubMedVolume(PubMedAsset):
     def volume_root(self):
         vol_path_list = ['', 'Volumes',]
         vol_path_list += self.name.split('.')
-        return '/'.join(vol_path_list)
+        return '/'.join(vol_path_list).replace('`','')
     
     @cached_property
     def path(self):
@@ -118,9 +122,9 @@ class PubMedVolume(PubMedAsset):
         # TODO: Add volume path
         path = dbutils.entry_point.getDbutils().notebook().getContext().notebookPath().getOrElse(None).split("/")
         if path[-2] == '_resources':
-            return '../../explore/data/volumes/' + '/'.join(self.name.split('.'))
+            return ('../../explore/data/volumes/' + '/'.join(self.name.split('.'))).replace('`','')
         elif path[-2] == 'databricks':
-            return '../explore/data/volumes/' + '/'.join(self.name.split('.'))
+            return ('../explore/data/volumes/' + '/'.join(self.name.split('.'))).replace('`','')
 
 # COMMAND ----------
 
@@ -136,46 +140,57 @@ import inspect
 @dataclass
 class PubMedConfig:
     # This is the class we'll use to conslidate our uc application entities into a single configuration
-    catalog_name: str ='pubmed_pipeline'
-    schema_raw_name: str = 'raw'
-    schema_curated_name: str = 'curated'
-    schema_processed_name: str  = 'processed'
+    _catalog_name: str ='pubmed_pipeline'
+    _schema_raw_name: str = 'raw'
+    _schema_curated_name: str = 'curated'
+    _schema_processed_name: str  = 'processed'
     file_type: str = ''
 
     def __post_init__(self):
+        if '-' in self._catalog_name and '`' not in self._catalog_name:
+                self._catalog_name = f'`{self._catalog_name}`'
+        setattr(self, 'catalog', PubMedAsset(uc_name=self._catalog_name,
+                                             create_sql_file='CREATE_CATALOG_pubmed_pipeline.sql'))
+        setattr(self, 'schema', type('Schema', (object,), {}))
+        setattr(self.schema, 'raw', PubMedAsset(uc_name=f'{self.catalog.name}.{self._schema_raw_name}',
+                                                create_sql_file='CREATE_SCHEMA_raw.sql'))
+        setattr(self.schema, 'curated', PubMedAsset(uc_name=f'{self.catalog.name}.{self._schema_curated_name}',
+                                                create_sql_file='CREATE_SCHEMA_curated.sql'))
+        setattr(self.schema, 'processed', PubMedAsset(uc_name=f'{self.catalog.name}.{self._schema_processed_name}',
+                                                create_sql_file='CREATE_SCHEMA_processed.sql'))
         if (self.file_type == "") and ("FILE_TYPE" in dbutils.notebook.entry_point.getCurrentBindings()):
             self.file_type = dbutils.notebook.entry_point.getCurrentBindings()['FILE_TYPE']
         setattr(self, 'raw_search_hist',
-                    PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_raw_name}.search_hist',
+                    PubMedTable(uc_name = f'{self.schema.raw.name}.search_hist',
                                 create_sql_file = 'CREATE_TABLE_raw_search_hist.sql'))
         setattr(self, 'processed_articles_content',
-                    PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_processed_name}.articles_content',
+                    PubMedTable(uc_name = f'{self.schema.processed.name}.articles_content',
                                 create_sql_file = 'CREATE_TABLE_processed_articles_content.sql'))
         # Only include tables & volumes that are dependent upon FILE_TYPE if exists in bindings
         if self.file_type != "":
             setattr(self, 'raw_metadata',
-                    PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_raw_name}.metadata_{self.file_type}',
+                    PubMedTable(uc_name = f'{self.schema.raw.name}.metadata_{self.file_type}',
                                 create_sql_file = 'CREATE_TABLE_raw_metadata.sql'))
             setattr(self.raw_metadata, 'cp',
-                    PubMedVolume(uc_name = f'{self.catalog_name}.{self.schema_raw_name}._checkpoints',
+                    PubMedVolume(uc_name = f'{self.schema.raw.name}._checkpoints',
                                  create_sql_file = 'CREATE_VOLUME_raw_checkpoints.sql',
                                  _path_value=f'metadata_{self.file_type}'))
             setattr(self, 'raw_articles',
-                    PubMedVolume(uc_name = f'{self.catalog_name}.{self.schema_raw_name}.articles',
+                    PubMedVolume(uc_name = f'{self.schema.raw.name}.articles',
                                  create_sql_file = 'CREATE_VOLUME_raw_articles.sql',
                                  _path_value=f'all/{self.file_type}'))
             setattr(self, 'curated_articles',
-                    PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_curated_name}.articles_{self.file_type}',
+                    PubMedTable(uc_name = f'{self.schema.curated.name}.articles_{self.file_type}',
                                 create_sql_file = 'CREATE_TABLE_curated_articles.sql'))
             setattr(self.curated_articles, 'cp',
-                    PubMedVolume(uc_name = f'{self.catalog_name}.{self.schema_curated_name}._checkpoints',
+                    PubMedVolume(uc_name = f'{self.schema.curated.name}._checkpoints',
                                  create_sql_file = 'CREATE_VOLUME_curated_checkpoints.sql',
                                  _path_value=f'articles_{self.file_type}'))
             setattr(self, 'processed_articles_content',
-                    PubMedTable(uc_name = f'{self.catalog_name}.{self.schema_processed_name}.articles_content',
+                    PubMedTable(uc_name = f'{self.schema.processed.name}.articles_content',
                                 create_sql_file = 'CREATE_TABLE_processed_articles_content.sql'))
             setattr(self.processed_articles_content, 'cp',
-                    PubMedVolume(uc_name = f'{self.catalog_name}.{self.schema_processed_name}._checkpoints',
+                    PubMedVolume(uc_name = f'{self.schema.processed.name}._checkpoints',
                                  create_sql_file = 'CREATE_VOLUME_processed_checkpoints.sql',
                                  _path_value=f'articles_content_{self.file_type}'))            
 
@@ -186,10 +201,10 @@ class PubMedConfig:
 
 # COMMAND ----------
 
-pubmed = PubMedConfig(catalog_name = PUBMED_CATALOG,
-                      schema_raw_name = PUBMED_SCHEMA_RAW,
-                      schema_curated_name = PUBMED_SCHEMA_CURATED,
-                      schema_processed_name = PUBMED_SCHEMA_PROCESSED)
+pubmed = PubMedConfig(_catalog_name = PUBMED_CATALOG,
+                      _schema_raw_name = PUBMED_SCHEMA_RAW,
+                      _schema_curated_name = PUBMED_SCHEMA_CURATED,
+                      _schema_processed_name = PUBMED_SCHEMA_PROCESSED)
 
 # COMMAND ----------
 
@@ -199,19 +214,28 @@ if inspect_assets == 'true':
     <tr><th style="background-color: orange;">pubmed Asset</th>
         <th style="background-color: orange;">Attributes</th>
         <th style="background-color: orange;">Description</th></tr>
-    <tr><td ROWSPAN=3><b>raw_metadata</b></td>
-        <td>ddl: <a href={pubmed.raw_metadata.create_sql_relative_url}>{pubmed.raw_metadata.create_sql_file}</a></td>
+    <tr><td ROWSPAN=3 style="background-color: yellow;"><b>raw_metadata</b></td>
+        <td><b>ddl</b>: <a href={pubmed.raw_metadata.create_sql_relative_url} style="text-decoration:none">{pubmed.raw_metadata.create_sql_file}</a></td>
         <td ROWSPAN=3><b>raw_metadata</b> is the table that syncs with all PubMed articles list.</br>It will also maintain the download status of all articles.</td></tr>
-    <tr><td>table: <a href={pubmed.raw_metadata.uc_relative_path}>{pubmed.raw_metadata.name}</a></td></tr>
-    <tr><td>cp: <a href={pubmed.raw_metadata.cp.uc_relative_path}>{pubmed.raw_metadata.cp.name}</a></td></tr>
-    <tr><td ROWSPAN=2><b>raw_search_hist</b></td>
-        <td>ddl: <a href={pubmed.raw_search_hist.create_sql_relative_url}>{pubmed.raw_search_hist.create_sql_file}</a></td>
+    <tr><td><b>table</b>: <a href={pubmed.raw_metadata.uc_relative_path} style="text-decoration:none">{pubmed.raw_metadata.name}</a></td></tr>
+    <tr><td><b>cp</b>: <a href={pubmed.raw_metadata.cp.uc_relative_path} style="text-decoration:none">{pubmed.raw_metadata.cp.name}</a></td></tr>
+    <tr><td ROWSPAN=2 style="background-color: yellow;"><b>raw_search_hist</b></td>
+        <td><b>ddl</b>: <a href={pubmed.raw_search_hist.create_sql_relative_url} style="text-decoration:none">{pubmed.raw_search_hist.create_sql_file}</a></td>
         <td ROWSPAN=2><b>raw_search_hist</b> Is where we will store previous searches used to avoid having larger search windows.</td></tr>
-    <tr><td>table: <a href={pubmed.raw_search_hist.uc_relative_path}>{pubmed.raw_search_hist.name}</a></td></tr>
-    <tr><td ROWSPAN=2><b>raw_articles</b></td>
-        <td>ddl: <a href={pubmed.raw_articles.create_sql_relative_url}>{pubmed.raw_articles.create_sql_file}</a></td>
+    <tr><td><b>table</b>: <a href={pubmed.raw_search_hist.uc_relative_path} style="text-decoration:none">{pubmed.raw_search_hist.name}</a></td></tr>
+    <tr><td ROWSPAN=2 style="background-color: yellow;"><b>raw_articles</b></td>
+        <td><b>ddl</b>: <a href={pubmed.raw_articles.create_sql_relative_url} style="text-decoration:none">{pubmed.raw_articles.create_sql_file}</a></td>
         <td ROWSPAN=2><b>raw_articles</b> is the table that syncs with all PubMed articles list.</br>It will also maintain the download status of all articles.</td></tr>
-    <tr><td>data: <a href={pubmed.raw_articles.uc_relative_path}>{pubmed.raw_articles.name}</a></td></tr>    
-    </table>
-    TODO: Brad add remaining assets"""
+    <tr><td><b>data</b>: <a href={pubmed.raw_articles.uc_relative_path} style="text-decoration:none">{pubmed.raw_articles.name}</a></td></tr>
+    <tr><td ROWSPAN=3 style="background-color: yellow;"><b>curated_articles</b></td>
+        <td><b>ddl</b>: <a href={pubmed.curated_articles.create_sql_relative_url} style="text-decoration:none">{pubmed.curated_articles.create_sql_file}</a></td>
+        <td ROWSPAN=3><b>curated_articles</b> is the table that contains a high performance format Delta for evaluating the XML Downloads</td></tr>
+    <tr><td><b>table</b>: <a href={pubmed.curated_articles.uc_relative_path} style="text-decoration:none">{pubmed.curated_articles.name}</a></td></tr>
+    <tr><td><b>cp</b>: <a href={pubmed.curated_articles.cp.uc_relative_path} style="text-decoration:none">{pubmed.curated_articles.cp.name}</a></td></tr>
+    <tr><td ROWSPAN=3 style="background-color: yellow;"><b>processed_articles_content</b></td>
+        <td><b>ddl</b>: <a href={pubmed.processed_articles_content.create_sql_relative_url} style="text-decoration:none">{pubmed.processed_articles_content.create_sql_file}</a></td>
+        <td ROWSPAN=3><b>raw_metadata</b> is the table that syncs with all PubMed articles list.</br>It will also maintain the download status of all articles.</td></tr>
+    <tr><td><b>table</b>: <a href={pubmed.processed_articles_content.uc_relative_path} style="text-decoration:none">{pubmed.processed_articles_content.name}</a></td></tr>
+    <tr><td><b>cp</b>: <a href={pubmed.processed_articles_content.cp.uc_relative_path} style="text-decoration:none">{pubmed.processed_articles_content.cp.name}</a></td></tr> 
+    </table>"""
     displayHTML(inspect_html)

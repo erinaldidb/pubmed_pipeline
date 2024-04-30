@@ -51,6 +51,11 @@ metadata_updates = get_needed_pmids_df(search_hist=pubmed.raw_search_hist,
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC SELECT * FROM pubmed_pipeline.raw.metadata_xml WHERE `status` = 'DOWNLOADED';
+
+# COMMAND ----------
+
 if dbutils.widgets.get("INSPECT_METADATA_HIST") == 'true':
     hist = spark.sql(f"DESCRIBE HISTORY {pubmed.raw_metadata.name}")
     display(hist)

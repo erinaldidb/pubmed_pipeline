@@ -1,22 +1,30 @@
 # Databricks notebook source
 # This notebook is to consolidate larger, complex functions used to interact with pubmed that will be used in the extract job
-from delta.tables import *
-import pyspark.sql.functions as fn
-from typing import Iterator
-import pandas as pd
-import requests
-import defusedxml.ElementTree as ET
-from time import sleep
-from datetime import datetime
-from functools import cached_property
+# from delta.tables import *
+# import pyspark.sql.functions as fn
+# from typing import Iterator
+# import pandas as pd
+# import requests
+# import defusedxml.ElementTree as ET
+# from time import sleep
+# from datetime import datetime
+# from functools import cached_property
+
+# from delta.tables import *
+# from typing import Iterator
+# import pandas as pd
+# import boto3
+# from botocore import UNSIGNED
+#from botocore.client import Config
 
 # COMMAND ----------
 
-from requests import Response
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Optional, Union, List
 from delta.tables import DeltaTable
+from pyspark.sql.functions import col, lit, least
+
+# COMMAND ----------
 
 @dataclass
 class PaperSearchResponse:
@@ -52,8 +60,6 @@ def searchPMCPapers(keyword: str,
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, lit, least
-
 # Get a date range that will avoid creating gaps in search range from previous runs
 
 def get_search_hist_args(keywords: Union[str, List[str]],
@@ -74,15 +80,6 @@ def get_search_hist_args(keywords: Union[str, List[str]],
     return [r.asDict() for r in args]
 
 # COMMAND ----------
-
-from delta.tables import *
-from pyspark.sql.functions import udf
-from typing import Iterator
-import pandas as pd
-
-import boto3
-from botocore import UNSIGNED
-from botocore.client import Config
 
 @udf
 def download_articles(accession_id: str,
@@ -161,7 +158,3 @@ def get_needed_pmids_df(search_hist: PubMedAsset,
 
     # TODO: Return a query that is only the insert records of the last run so that we don't run the risk of triggering another download
     return metadata_src
-
-# COMMAND ----------
-
-
