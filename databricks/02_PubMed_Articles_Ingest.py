@@ -45,6 +45,17 @@ metadata_updates = get_needed_pmids_df(search_hist=pubmed.raw_search_hist,
 
 # COMMAND ----------
 
+metadata_updates = get_needed_pmids_df(search_hist=pubmed.raw_search_hist,
+                                       metadata=pubmed.raw_metadata,
+                                       articles=pubmed.raw_articles,
+                                       keywords="knee")
+
+# COMMAND ----------
+
+display(metadata_updates)
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC
 # MAGIC ## Inspect `pubmed.raw_metadata` history

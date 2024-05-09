@@ -80,6 +80,10 @@ def upsert_metadata(microBatchOutputDF: DataFrame, batchId: int):
 
 # COMMAND ----------
 
+spark.conf.set("fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider")
+
+# COMMAND ----------
+
 # TODO: Move PUBMED_SOURCE_METADATA_BUCKET into pubmed_central_utils
 PUBMED_SOURCE_METADATA_BUCKET = f"s3://pmc-oa-opendata/oa_comm/{FILE_TYPE}/metadata/csv/"
 

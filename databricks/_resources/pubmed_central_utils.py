@@ -5,13 +5,13 @@
 # from typing import Iterator
 # import pandas as pd
 # import requests
-# import defusedxml.ElementTree as ET
-# from time import sleep
+# 
+# 
 # from datetime import datetime
 # from functools import cached_property
 
 # from delta.tables import *
-# from typing import Iterator
+# 
 # import pandas as pd
 # import boto3
 # from botocore import UNSIGNED
@@ -19,7 +19,13 @@
 
 # COMMAND ----------
 
+import defusedxml.ElementTree as ET
+from typing import Iterator, Optional, Union, List
+from time import sleep
 from dataclasses import dataclass
+from datetime import datetime
+import requests
+from requests.models import Response
 from functools import cached_property
 from delta.tables import DeltaTable
 from pyspark.sql.functions import col, lit, least
@@ -137,18 +143,18 @@ def get_needed_pmids_df(search_hist: PubMedAsset,
                                        F.when(F.col('Retracted') == F.lit('yes'), F.lit("RETRACTED")) \
                                        .otherwise(download_articles(F.col("AccessionId"),
                                                                     F.lit(articles_path),
-                                                                    F.lit(file_type)))).cache()
+                                                                    F.lit(file_type)))) \
+                           .withColumn("volume_path", F.when(F.col('Status')==F.lit("DOWNLOADED"),
+                                                             F.concat(F.lit(articles_path), F.lit('/'), F.col("AccessionId"), F.lit('.'), F.lit(file_type)))).cache()
 
     # Update metadata table
-    pubmed.raw_metadata.dt.alias("tgt").merge(source = metadata_src.alias("src"),
+    metadata.dt.alias("tgt").merge(source = metadata_src.alias("src"),
                                               condition = "src.AccessionID = tgt.AccessionID") \
         .whenMatchedUpdateAll() \
         .execute()
-    # metadata_src will likwly be instpected after return, if unpersist is run, would rerun entire download which is not desired
-    # metadata_src.unpersist()
 
     # Update search_hist
-    pubmed.raw_search_hist.dt.alias("tgt").merge(source = spark.createDataFrame(kwargs_list).alias("src"),
+    search_hist.dt.alias("tgt").merge(source = spark.createDataFrame(kwargs_list).alias("src"),
                                                  condition = "src.keyword = tgt.keyword") \
         .whenMatchedUpdateAll() \
         .whenNotMatchedInsertAll() \
@@ -156,5 +162,9 @@ def get_needed_pmids_df(search_hist: PubMedAsset,
 
     # NOTE: Removal of RETRACTED Files will be moved into 01 process metadata (originally was part of download process in notebook 02)
 
-    # TODO: Return a query that is only the insert records of the last run so that we don't run the risk of triggering another download
+    # metadata_src will likely be instpected after return, if unpersist is run, would rerun entire download which is not desired
+    # therefor we will redefine with a definition that does not call download_articles
+    metadata_src.unpersist()
+    metadata_src = metadata.df.join(pmids_df, "AccessionId", "leftsemi")
+
     return metadata_src
