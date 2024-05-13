@@ -80,8 +80,8 @@ def get_search_hist_args(keywords: Union[str, List[str]],
                          .withColumn('h_min', F.coalesce(F.col('h.min_dte'), F.col('a.min_dte'))) \
                          .withColumn('h_max', F.coalesce(F.col('h.max_dte'), F.col('a.max_dte'))) \
                          .select(F.col('keyword').alias('keyword'),
-                                 F.when(F.col('a.min_dte') <= F.col('h_min'), F.col('a.min_dte')).otherwise(F.col('h_max')).alias('min_dte'),
-                                 F.when(F.col('a.max_dte') >= F.col('h_max'), F.col('a.max_dte')).otherwise(F.col('h_min')).alias('max_dte')) \
+                                 F.when(F.col('a.min_dte') < F.col('h_min'), F.col('a.min_dte')).otherwise(F.col('h_max')).alias('min_dte'),
+                                 F.when(F.col('a.max_dte') > F.col('h_max'), F.col('a.max_dte')).otherwise(F.col('h_min')).alias('max_dte')) \
                          .filter(F.col('min_dte') <= F.col('max_dte')).collect()
     return [r.asDict() for r in args]
 

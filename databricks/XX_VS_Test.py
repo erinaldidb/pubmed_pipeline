@@ -31,8 +31,8 @@
 
 # COMMAND ----------
 
-CONTENT_DELTA_TABLE_UC_NAME = "main.default.vs_test"
-VECTOR_SEARCH_ENDPOINT_NAME = "vector_search_test"
+CONTENT_DELTA_TABLE_UC_NAME = "`pubmed-pipeline`.test.vs_test"
+VECTOR_SEARCH_ENDPOINT_NAME = "vector_search_test_hypen"
 CONTENT_VS_INDEX_UC_NAME = CONTENT_DELTA_TABLE_UC_NAME + "_vs_index"
 
 # This is an easy way to make our table name available in the SQL API:
@@ -101,7 +101,7 @@ def index_exists(vsc, endpoint_name, index_full_name):
             print(f'Unexpected error describing the index. This could be a permission issue.')
             raise e
     return False
-    
+
 def wait_for_index_to_be_ready(vsc, vs_endpoint_name, index_name):
   for i in range(180):
     idx = vsc.get_index(vs_endpoint_name, index_name).describe()
@@ -136,7 +136,7 @@ wait_for_vs_endpoint_to_be_ready(client, VECTOR_SEARCH_ENDPOINT_NAME)
 
 # COMMAND ----------
 
-# This section 
+# This section adds an index to the endpoint
 
 if not index_exists(client, VECTOR_SEARCH_ENDPOINT_NAME, CONTENT_VS_INDEX_UC_NAME):
   print(f"Creating index {CONTENT_VS_INDEX_UC_NAME} on endpoint {VECTOR_SEARCH_ENDPOINT_NAME}...")
@@ -170,10 +170,6 @@ QUERY = "What is an automobile?"
 QUERY = "How is oil transported?"
 QUERY = "Leo was a ThunderCat. What Color was his hair?"
 
-index = client.get_index(endpoint_name=VECTOR_SEARCH_ENDPOINT_NAME, index_name="main.default.vs_test_vs_index")
+index = client.get_index(endpoint_name=VECTOR_SEARCH_ENDPOINT_NAME, index_name=CONTENT_VS_INDEX_UC_NAME)
 rslt = index.similarity_search(num_results=1, columns=["content"], query_text=QUERY)
 print(rslt['result']['data_array'][0][0])
-
-# COMMAND ----------
-
-
