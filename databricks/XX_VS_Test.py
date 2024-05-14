@@ -32,8 +32,10 @@
 # COMMAND ----------
 
 CONTENT_DELTA_TABLE_UC_NAME = "`pubmed-pipeline`.test.vs_test"
+CONTENT_DELTA_TABLE_UC_NAME_NO_TICKS = CONTENT_DELTA_TABLE_UC_NAME.replace('`','')
 VECTOR_SEARCH_ENDPOINT_NAME = "vector_search_test_hypen"
 CONTENT_VS_INDEX_UC_NAME = CONTENT_DELTA_TABLE_UC_NAME + "_vs_index"
+CONTENT_VS_INDEX_UC_NAME_NO_TICKS = CONTENT_VS_INDEX_UC_NAME.replace('`','')
 
 # This is an easy way to make our table name available in the SQL API:
 spark.conf.set("test.CONTENT_DELTA_TABLE_NAME", CONTENT_DELTA_TABLE_UC_NAME)
@@ -138,23 +140,23 @@ wait_for_vs_endpoint_to_be_ready(client, VECTOR_SEARCH_ENDPOINT_NAME)
 
 # This section adds an index to the endpoint
 
-if not index_exists(client, VECTOR_SEARCH_ENDPOINT_NAME, CONTENT_VS_INDEX_UC_NAME):
-  print(f"Creating index {CONTENT_VS_INDEX_UC_NAME} on endpoint {VECTOR_SEARCH_ENDPOINT_NAME}...")
+if not index_exists(client, VECTOR_SEARCH_ENDPOINT_NAME, CONTENT_VS_INDEX_UC_NAME_NO_TICKS):
+  print(f"Creating index {CONTENT_VS_INDEX_UC_NAME_NO_TICKS} on endpoint {VECTOR_SEARCH_ENDPOINT_NAME}...")
   client.create_delta_sync_index(
     endpoint_name=VECTOR_SEARCH_ENDPOINT_NAME,
-    index_name=CONTENT_VS_INDEX_UC_NAME,
-    source_table_name=CONTENT_DELTA_TABLE_UC_NAME,
+    index_name=CONTENT_VS_INDEX_UC_NAME_NO_TICKS,
+    source_table_name=CONTENT_DELTA_TABLE_UC_NAME_NO_TICKS,
     pipeline_type="TRIGGERED",
     primary_key="id",
     embedding_source_column='content',                        #The column containing our text
     embedding_model_endpoint_name='databricks-bge-large-en' ) #The embedding endpoint used to create the embeddings
 else:
   #Trigger a sync to update our vs content with the new data saved in the table
-  client.get_index(VECTOR_SEARCH_ENDPOINT_NAME, CONTENT_VS_INDEX_UC_NAME).sync()
+  client.get_index(VECTOR_SEARCH_ENDPOINT_NAME, CONTENT_VS_INDEX_UC_NAME_NO_TICKS).sync()
 
 #Let's wait for the index to be ready and all our embeddings to be created and indexed
-wait_for_index_to_be_ready(client, VECTOR_SEARCH_ENDPOINT_NAME, CONTENT_VS_INDEX_UC_NAME)
-print(f"index {CONTENT_VS_INDEX_UC_NAME} on table {CONTENT_DELTA_TABLE_UC_NAME} is ready")
+wait_for_index_to_be_ready(client, VECTOR_SEARCH_ENDPOINT_NAME, CONTENT_VS_INDEX_UC_NAME_NO_TICKS)
+print(f"index {CONTENT_VS_INDEX_UC_NAME_NO_TICKS} on table {CONTENT_DELTA_TABLE_UC_NAME_NO_TICKS} is ready")
 
 # COMMAND ----------
 
@@ -170,6 +172,6 @@ QUERY = "What is an automobile?"
 QUERY = "How is oil transported?"
 QUERY = "Leo was a ThunderCat. What Color was his hair?"
 
-index = client.get_index(endpoint_name=VECTOR_SEARCH_ENDPOINT_NAME, index_name=CONTENT_VS_INDEX_UC_NAME)
+index = client.get_index(endpoint_name=VECTOR_SEARCH_ENDPOINT_NAME, index_name=CONTENT_VS_INDEX_UC_NAME_NO_TICKS)
 rslt = index.similarity_search(num_results=1, columns=["content"], query_text=QUERY)
 print(rslt['result']['data_array'][0][0])
