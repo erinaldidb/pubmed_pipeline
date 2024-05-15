@@ -174,3 +174,18 @@ article_xml_df.createOrReplaceTempView('article_xml_df')
 create_sql = 'SHOW CREATE TABLE `pubmed-pipeline`.test.article_curated'
 create_table_string = spark.sql(create_sql).collect()[0].createtab_stmt
 print(create_table_string)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC # Working with XML strings in Delta Lake
+# MAGIC
+# MAGIC We are still left with the problem that we have very large strings that are still in xml format. Fortunately, we can still work with these strings using built in methods like  [from_xml](https://docs.databricks.com/en/sql/language-manual/functions/from_xml.html) and [xpath_string](https://docs.databricks.com/en/sql/language-manual/functions/xpath_string.html). Below is an example of how we can extract the abstract from our body column using only built-in sql statements.
+# MAGIC
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT xpath_string(front,'front/article-meta/abstract/p') abstract
+# MAGIC from `pubmed-pipeline`.test.article_curated;
