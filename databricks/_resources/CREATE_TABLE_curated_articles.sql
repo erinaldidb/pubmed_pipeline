@@ -1,4 +1,4 @@
-CREATE TABLE {uc_name} (
+CREATE TABLE IF NOT EXISTS {uc_name} (
   attrs MAP<STRING, STRING>,
   front STRING,
   body STRING,
