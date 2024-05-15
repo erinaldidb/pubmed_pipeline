@@ -122,6 +122,9 @@ def get_needed_pmids_df(search_hist: PubMedAsset,
         keywords: [str] = keywords if isinstance(keywords, list) else [str(keywords),]
     else:
         keywords: [str] = [r.keyword for r in search_hist.df.select(F.col('keyword')).distinct().collect()]
+        if len(keywords) == 0:
+            raise ValueError("When raw_search_hist is empty, you must provide a value for keywords which will instantiate the raw_search_hist table.")
+
     max_dte = max_dte or datetime.today().strftime('%Y/%m/%d')
     
     kwargs_list = get_search_hist_args(keywords, search_hist, min_dte, max_dte)
